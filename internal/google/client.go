@@ -41,18 +41,51 @@ type client struct {
 	service *admin.Service
 }
 
+type ExternalAccountConfig struct {
+	Type             string `json:"type"`
+	Audience         string `json:"audience"`
+	SubjectTokenType string `json:"subject_token_type"`
+	TokenURL         string `json:"token_url"`
+	CredentialSource struct {
+		URL     string `json:"url"`
+		Headers struct {
+			Authorization string `json:"Authorization"`
+		} `json:"headers"`
+		Format struct {
+			Type                  string `json:"type"`
+			SubjectTokenFieldName string `json:"subject_token_field_name"`
+		} `json:"format"`
+	} `json:"credential_source"`
+	ServiceAccountImpersonationURL string `json:"service_account_impersonation_url"`
+}
+
 // NewClient creates a new client for Google's Admin API
 func NewClient(ctx context.Context, adminEmail string, serviceAccountKey []byte, externalAccount bool) (Client, error) {
 	var ts oauth2.TokenSource
 
 	if externalAccount {
-		var extCfg externalaccount.Config
+		var extCfg ExternalAccountConfig
 		err := json.Unmarshal(serviceAccountKey, &extCfg)
 		if err != nil {
 			return nil, err
 		}
 
-		ts, err = externalaccount.NewTokenSource(ctx, extCfg)
+		ts, err = externalaccount.NewTokenSource(ctx, externalaccount.Config{
+			Audience:         extCfg.Audience,
+			SubjectTokenType: extCfg.SubjectTokenType,
+			TokenURL:         extCfg.TokenURL,
+			CredentialSource: &externalaccount.CredentialSource{
+				URL: extCfg.CredentialSource.URL,
+				Headers: map[string]string{
+					"Authorization": extCfg.CredentialSource.Headers.Authorization,
+				},
+				Format: externalaccount.Format{
+					Type:                  extCfg.CredentialSource.Format.Type,
+					SubjectTokenFieldName: extCfg.CredentialSource.Format.SubjectTokenFieldName,
+				},
+			},
+			ServiceAccountImpersonationURL: extCfg.ServiceAccountImpersonationURL,
+		})
 		if err != nil {
 			return nil, err
 		}
