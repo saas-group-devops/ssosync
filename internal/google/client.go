@@ -17,10 +17,13 @@ package google
 
 import (
 	"context"
-	"strings"
+	"encoding/json"
 	"errors"
+	"strings"
 
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"golang.org/x/oauth2/google/externalaccount"
 	admin "google.golang.org/api/admin/directory/v1"
 	"google.golang.org/api/option"
 )
@@ -39,18 +42,33 @@ type client struct {
 }
 
 // NewClient creates a new client for Google's Admin API
-func NewClient(ctx context.Context, adminEmail string, serviceAccountKey []byte) (Client, error) {
-	config, err := google.JWTConfigFromJSON(serviceAccountKey, admin.AdminDirectoryGroupReadonlyScope,
-		admin.AdminDirectoryGroupMemberReadonlyScope,
-		admin.AdminDirectoryUserReadonlyScope)
+func NewClient(ctx context.Context, adminEmail string, serviceAccountKey []byte, externalAccount bool) (Client, error) {
+	var ts oauth2.TokenSource
 
-	if err != nil {
-		return nil, err
+	if externalAccount {
+		var extCfg externalaccount.Config
+		err := json.Unmarshal(serviceAccountKey, &extCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		ts, err = externalaccount.NewTokenSource(ctx, extCfg)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		config, err := google.JWTConfigFromJSON(serviceAccountKey, admin.AdminDirectoryGroupReadonlyScope,
+			admin.AdminDirectoryGroupMemberReadonlyScope,
+			admin.AdminDirectoryUserReadonlyScope)
+
+		if err != nil {
+			return nil, err
+		}
+
+		config.Subject = adminEmail
+
+		ts = config.TokenSource(ctx)
 	}
-
-	config.Subject = adminEmail
-
-	ts := config.TokenSource(ctx)
 
 	srv, err := admin.NewService(ctx, option.WithTokenSource(ts))
 	if err != nil {
@@ -91,13 +109,14 @@ func (c *client) GetGroupMembers(g *admin.Group) ([]*admin.Member, error) {
 // * https://developers.google.com/admin-sdk/directory/reference/rest/v1/users/list
 // * https://developers.google.com/admin-sdk/directory/v1/guides/search-users
 // query possible values:
-// '' --> empty or not defined
-//  name:'Jane'
-//  email:admin*
-//  isAdmin=true
-//  manager='janesmith@example.com'
-//  orgName=Engineering orgTitle:Manager
-//  EmploymentData.projects:'GeneGnomes'
+// ” --> empty or not defined
+//
+//	name:'Jane'
+//	email:admin*
+//	isAdmin=true
+//	manager='janesmith@example.com'
+//	orgName=Engineering orgTitle:Manager
+//	EmploymentData.projects:'GeneGnomes'
 func (c *client) GetUsers(query string) ([]*admin.User, error) {
 	u := make([]*admin.User, 0)
 	var err error
@@ -108,14 +127,14 @@ func (c *client) GetUsers(query string) ([]*admin.User, error) {
 	}
 
 	// If we have wildcard then fetch all users
-	if query  == "*" {
-                err = c.service.Users.List().Customer("my_customer").Pages(c.ctx, func(users *admin.Users) error {
-                        u = append(u, users.Users...)
-                        return nil
-                })
-        } else {
+	if query == "*" {
+		err = c.service.Users.List().Customer("my_customer").Pages(c.ctx, func(users *admin.Users) error {
+			u = append(u, users.Users...)
+			return nil
+		})
+	} else {
 
-	        // The Google api doesn't support multi-part queries, but we do so we need to split into an array of query strings
+		// The Google api doesn't support multi-part queries, but we do so we need to split into an array of query strings
 		queries := strings.Split(query, ",")
 
 		// Then call the api one query at a time, appending to our list
@@ -134,15 +153,14 @@ func (c *client) GetUsers(query string) ([]*admin.User, error) {
 	// So we need to replace any 'zero width space' strings with a single 'space' to allow comparison and sync
 	for _, user := range u {
 		user.Name.GivenName = strings.Replace(user.Name.GivenName, string('\u200B'), " ", -1)
-        	user.Name.FamilyName = strings.Replace(user.Name.FamilyName, string('\u200B'), " ", -1)
+		user.Name.FamilyName = strings.Replace(user.Name.FamilyName, string('\u200B'), " ", -1)
 	}
 
 	// Check we've got some users otherwise something is wrong.
-        if len(u) == 0 {
-                return u, errors.New("google api returned 0 users?")
-        } 
+	if len(u) == 0 {
+		return u, errors.New("google api returned 0 users?")
+	}
 	return u, err
-
 
 }
 
@@ -152,36 +170,37 @@ func (c *client) GetUsers(query string) ([]*admin.User, error) {
 // * https://developers.google.com/admin-sdk/directory/reference/rest/v1/groups/list
 // * https://developers.google.com/admin-sdk/directory/v1/guides/search-groups
 // query possible values:
-// '' --> empty or not defined
-//  name='contact'
-//  email:admin*
-//  memberKey=user@company.com
-//  name:contact* email:contact*
-//  name:Admin* email:aws-*
-//  email:aws-*
+// ” --> empty or not defined
+//
+//	name='contact'
+//	email:admin*
+//	memberKey=user@company.com
+//	name:contact* email:contact*
+//	name:Admin* email:aws-*
+//	email:aws-*
 func (c *client) GetGroups(query string) ([]*admin.Group, error) {
 	g := make([]*admin.Group, 0)
 	var err error
 
-        // If we have an empty query, then we are not looking for groups
-        if query  == "" {
-                return g, err
-        }
-
-        // If we have wildcard then fetch all groups
-        if query  == "*" {
-		err = c.service.Groups.List().Customer("my_customer").Pages(context.TODO(), func(groups *admin.Groups) error {
-                        g = append(g, groups.Groups...)
-                        return nil
-                })
+	// If we have an empty query, then we are not looking for groups
+	if query == "" {
 		return g, err
 	}
 
-      	// The Google api doesn't support multi-part queries, but we do so we need to split into an array of query strings
-       	queries := strings.Split(query, ",")
+	// If we have wildcard then fetch all groups
+	if query == "*" {
+		err = c.service.Groups.List().Customer("my_customer").Pages(context.TODO(), func(groups *admin.Groups) error {
+			g = append(g, groups.Groups...)
+			return nil
+		})
+		return g, err
+	}
 
-       	// Then call the api one query at a time, appending to our list
-       	for _, subQuery := range queries {
+	// The Google api doesn't support multi-part queries, but we do so we need to split into an array of query strings
+	queries := strings.Split(query, ",")
+
+	// Then call the api one query at a time, appending to our list
+	for _, subQuery := range queries {
 		err = c.service.Groups.List().Customer("my_customer").Query(subQuery).Pages(context.TODO(), func(groups *admin.Groups) error {
 			g = append(g, groups.Groups...)
 			return nil

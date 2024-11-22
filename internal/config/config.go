@@ -9,6 +9,8 @@ type Config struct {
 	LogLevel string `mapstructure:"log_level"`
 	// LogFormat is the format that is used for logging
 	LogFormat string `mapstructure:"log_format"`
+	// Use Workload Identity Federation ...
+	UseWIF bool `mapstructure:"use_wif"`
 	// GoogleCredentials ...
 	GoogleCredentials string `mapstructure:"google_credentials"`
 	// GoogleAdmin ...
@@ -23,7 +25,7 @@ type Config struct {
 	SCIMAccessToken string `mapstructure:"scim_access_token"`
 	// IsLambda ...
 	IsLambda bool
-        // IsLambdaRunningInCodePipeline ...
+	// IsLambdaRunningInCodePipeline ...
 	IsLambdaRunningInCodePipeline bool
 	// Ignore users ...
 	IgnoreUsers []string `mapstructure:"ignore_users"`
@@ -48,6 +50,8 @@ const (
 	DefaultDebug = false
 	// DefaultGoogleCredentials is the default credentials path
 	DefaultGoogleCredentials = "credentials.json"
+	// DefaultUseWIF is the default use workload identity federation status.
+	DefaultUseWIF = false
 	// DefaultSyncMethod is the default sync method to use.
 	DefaultSyncMethod = "groups"
 )
@@ -60,5 +64,6 @@ func New() *Config {
 		LogFormat:         DefaultLogFormat,
 		SyncMethod:        DefaultSyncMethod,
 		GoogleCredentials: DefaultGoogleCredentials,
+		UseWIF:            DefaultUseWIF,
 	}
 }
